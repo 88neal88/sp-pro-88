@@ -286,6 +286,20 @@ tfoot td.sum{background:#fafbfd;font-size:10px}
 .empty-state{padding:26px 12px;text-align:center;color:var(--ink3);font-size:12px}
 .empty-state .big{font-size:22px;display:block;margin-bottom:6px;opacity:.5}
 
+/* ---------- スタッフ0名のときの案内 ---------- */
+.empty-guide{flex:1;min-height:0;overflow:auto;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:26px 18px 30px}
+.empty-guide .eg-ico{width:46px;height:46px;border-radius:13px;background:#eef4ff;border:1px solid #c7d7f5;color:#2f80ed;display:flex;align-items:center;justify-content:center;font-size:24px;font-weight:700;line-height:1;margin-bottom:10px}
+.empty-guide .eg-title{font-size:14px;font-weight:700;color:var(--ink);letter-spacing:.01em}
+.empty-guide .eg-lead{margin:8px 0 0;font-size:12px;line-height:1.85;color:var(--ink2);max-width:540px}
+.empty-guide .eg-lead b{color:var(--ink)}
+.empty-guide .eg-btns{display:flex;flex-wrap:wrap;gap:7px;justify-content:center;margin-top:16px}
+.empty-guide .eg-note{margin-top:12px;font-size:10.5px;color:var(--ink3);line-height:1.65}
+@media (max-width:900px){
+  .empty-guide{padding:22px 14px 26px}
+  .empty-guide .eg-lead{font-size:11.5px;line-height:1.8}
+  .empty-guide .eg-btns .btn{height:32px;font-size:11.5px}
+}
+
 /* ---------- modals ---------- */
 .modal-backdrop{position:fixed;inset:0;background:rgba(15,23,42,.42);display:flex;align-items:center;justify-content:center;z-index:100;padding:14px;backdrop-filter:blur(1.5px)}
 .modal{background:#fff;border-radius:16px;width:min(960px,100%);max-height:94vh;display:flex;flex-direction:column;box-shadow:0 24px 60px rgba(15,23,42,.3);overflow:hidden}
@@ -321,6 +335,8 @@ tfoot td.sum{background:#fafbfd;font-size:10px}
 .inline .unit{font-size:11px;color:var(--ink3)}
 .fgrp{border:1px solid var(--line);border-radius:11px;padding:9px 10px;margin-bottom:10px;background:#fcfdff}
 .fgrp .glabel{display:flex;align-items:center;gap:6px;margin-bottom:6px}
+.taglink{margin-left:auto;font:inherit;font-size:10px;font-weight:700;color:var(--accent);background:#eef4ff;border:1px solid #c7d7f5;border-radius:7px;padding:3px 7px;cursor:pointer;white-space:nowrap;line-height:1.3}
+.taglink:hover{background:#e3edff;border-color:#a9c6f5}
 .g3{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
 .g3 .frow{margin-bottom:0}
 .calcbox{margin-top:8px;background:#eef4ff;border:1px solid #d3e2fb;border-radius:8px;padding:6px 8px;font-size:11px;color:#25457e;line-height:1.55}
@@ -600,9 +616,9 @@ body.gate-locked{overflow:hidden}
       <button id="nextMonth" class="icon-btn" title="次の月" aria-label="次の月">›</button>
     </div>
     <select id="presetSel" class="sel" aria-label="サンプル切り替え">
+      <option value="blank">空白から新規作成</option>
       <option value="glasses16">眼鏡店（16人・フル条件）</option>
       <option value="glasses4">眼鏡店（4名）</option>
-      <option value="blank">空白から新規作成</option>
     </select>
   </div>
 </header>
@@ -655,6 +671,19 @@ body.gate-locked{overflow:hidden}
         <span class="lg"><i class="lk"></i>ロック</span>
         <span class="lg"><i class="pn"></i>手動固定</span>
       </div>
+    </div>
+    <!-- スタッフ0名のときの案内（初回はこの「空白・タグ0個」の状態から始まります） -->
+    <div class="empty-guide" id="emptyGuide" hidden>
+      <div class="eg-ico" aria-hidden="true">＋</div>
+      <div class="eg-title">まだスタッフが登録されていません</div>
+      <div class="eg-lead">このシートは<b>空白（タグ0個）</b>から始まります。「スタッフ設定」から追加するか、上のプルダウン／下のボタンからサンプル（16名・4名）を読み込んで、動きを先に見ることもできます。<br>タグは業種に合わせて自由に作れます（例：検眼・調理・レジ・鍵当番など）。</div>
+      <div class="eg-btns">
+        <button class="btn primary" type="button" data-empty="add-staff">＋ スタッフを追加</button>
+        <button class="btn" type="button" data-empty="preset-glasses16">サンプル（16名）を見る</button>
+        <button class="btn" type="button" data-empty="preset-glasses4">サンプル（4名）を見る</button>
+        <button class="btn" type="button" data-empty="open-tags">＋ タグを追加・編集</button>
+      </div>
+      <div class="eg-note">「スタッフ設定」の中の「スキル・属性タグ」の横にも「＋ タグを追加・編集」ボタンがあります。</div>
     </div>
     <div class="table-wrap" id="tableWrap">
       <table id="shiftTable"></table>
@@ -2548,18 +2577,12 @@ function buildPreset(key){
   }
 
   if(key==='blank'){
-    var tags2 = [
-      {id:'b1', name:'新人', color:'#64748b'},
-      {id:'b2', name:'ベテラン', color:'#15803d'},
-      {id:'b3', name:'女性', color:'#db2777'},
-      {id:'b4', name:'管理者', color:'#dc2626'},
-      {id:'b5', name:'鍵当番', color:'#b45309'}
-    ];
+    /* 空白から始めるときはタグも0個。業種に合わせて自分のタグを作ってもらう */
     var rules2 = {
       maxConsec:5, minTotal:2, minEarly:1, minLate:1, noNewbieOnly:true,
       shiftHours:8, throughExtra:2, imbalanceLimit:6, tagRules:[]
     };
-    return {version:2, preset:'blank', month:month, tags:tags2, rules:rules2, staff:[], shifts:{}, seq:1};
+    return {version:2, preset:'blank', month:month, tags:[], rules:rules2, staff:[], shifts:{}, seq:1};
   }
 
   /* glasses16 (default, full sample) */
@@ -2844,6 +2867,12 @@ function renderTable(){
   h += '</tfoot>';
   table.innerHTML = h;
 
+  /* スタッフ0名のときは、空のシフト表の代わりに案内を出す */
+  var egBox = $('#emptyGuide');
+  if(egBox) egBox.hidden = state.staff.length > 0;
+  var twBox = $('#tableWrap');
+  if(twBox) twBox.hidden = state.staff.length === 0;
+
   var pq = splitMonth(state.month);
   $('#printTitle').textContent = pq.y + '年' + pq.m + '月 シフト表（' + state.staff.length + '名）';
 }
@@ -2852,6 +2881,15 @@ function renderTable(){
 function renderPanel(){
   var W = lastAnalysis.warnings;
   var list = $('#warnList');
+  /* スタッフ未登録のときは日別の人数不足を並べず、次にやることを出す */
+  if(!state.staff.length){
+    var b0 = $('#warnCount');
+    if(b0){ b0.textContent = '0'; b0.classList.remove('alert'); }
+    $('#mWarn').textContent = '0';
+    $('#panelSum').innerHTML = '';
+    list.innerHTML = '<div class="empty-state"><span class="big">＋</span>まだスタッフがいません。<br>「スタッフ設定」から追加すると、抜け漏れチェックが始まります。</div>';
+    return;
+  }
   var hi = 0, mid = 0, low = 0;
   W.forEach(function(w){ if(w.sev==='high') hi++; else if(w.sev==='mid') mid++; else low++; });
   var badge = $('#warnCount');
@@ -2920,9 +2958,11 @@ function renderMeta(){
   ms.value = state.month;
   var W = lastAnalysis.warnings;
   var hi = W.filter(function(w){ return w.sev==='high'; }).length;
-  $('#statusMsg').textContent = W.length
-    ? '警告 ' + W.length + '件' + (hi ? '（要対応 ' + hi + '件）' : '')
-    : '警告なし — このまま出力できます';
+  $('#statusMsg').textContent = state.staff.length === 0
+    ? 'スタッフ未登録 — 「スタッフ設定」から追加してください'
+    : (W.length
+      ? '警告 ' + W.length + '件' + (hi ? '（要対応 ' + hi + '件）' : '')
+      : '警告なし — このまま出力できます');
 }
 
 /* ================= refresh ================= */
@@ -3103,6 +3143,8 @@ function closeModal(id){
     else toast('条件を保存しました。自動入力はOFFなので「自動下書き生成」でシフトに反映できます');
   }
   delete modalSnapshot[id];
+  /* タグ管理を閉じたら、スタッフ設定のタグ一覧もその場で最新にする */
+  if(id==='tagsModal') renderStaffFormIfOpen();
 }
 
 function renderStaffList(){
@@ -3154,7 +3196,7 @@ function renderStaffForm(){
   var chips = state.tags.map(function(t){
     var on = hasTag(s, t.id);
     return '<button class="tchip'+(on?' on':'')+'" data-tag="'+t.id+'"><span class="sw" style="background:'+t.color+'"></span>'+esc(t.name)+'</button>';
-  }).join('') || '<span class="hint">タグがありません</span>';
+  }).join('') || '<span class="hint">タグはまだ0個です。右の「＋ タグを追加・編集」から作れます。</span>';
   var others = state.staff.filter(function(o){ return o.id!==s.id; });
   others.sort(function(a,b){
     var ra = (s.pairs||{})[a.id] ? 0 : 1, rb = (s.pairs||{})[b.id] ? 0 : 1;
@@ -3260,7 +3302,7 @@ function renderStaffForm(){
     + '</div>'
     + '</div>'
     + '</div>'
-    + '<div class="fgrp"><div class="glabel">スキル・属性タグ</div><div class="tagchips" id="fTagChips">'+chips+'</div></div>'
+    + '<div class="fgrp"><div class="glabel">スキル・属性タグ<button type="button" class="taglink" id="fOpenTags">＋ タグを追加・編集</button></div><div class="tagchips" id="fTagChips">'+chips+'</div></div>'
     + '<div class="fgrp"><div class="glabel" style="display:block;margin-bottom:5px">ペアの決まり <span class="muted" style="display:block;font-weight:400;margin-top:1px;line-height:1.45">相手ごとに「同じ日に休みにしない（同時休みNG）／同じ時間帯を別にする／同じ日に出勤させない／なるべく一緒に出勤」を選べます。通しは早番・遅番の両方に重なります。</span></div><div class="pairs" id="fPairs">'+pairs+'</div></div>'
     + '<div style="display:flex;justify-content:flex-end;padding-bottom:4px"><button class="btn danger" id="fDelete">このスタッフを削除</button></div>';
 
@@ -3317,6 +3359,14 @@ function renderStaffForm(){
       refresh();
     });
   });
+  /* スタッフ設定からタグ管理を開く（閉じるとこの画面のタグ一覧も更新される） */
+  var fOpenTags = $('#fOpenTags');
+  if(fOpenTags){
+    fOpenTags.addEventListener('click', function(){
+      renderTags();
+      openModal('tagsModal');
+    });
+  }
   $$('#fShiftLimit button').forEach(function(b){
     b.addEventListener('click', function(){
       s.shiftLimit = b.dataset.sl || '';
@@ -3827,7 +3877,7 @@ function renderTags(){
       + '<span class="cnt">'+use+'名／条件'+rules+'</span>'
       + '<button class="del" data-tdel="'+i+'" style="width:26px;height:26px;border:1px solid #d6dde7;border-radius:7px;background:#fff;color:#8b97a8;cursor:pointer">×</button>'
       + '</div>';
-  }).join('') || '<div class="hint">タグがありません。追加してください。</div>';
+  }).join('') || '<div class="hint">タグはまだ0個です（空白から始まるので、最初は空です）。「＋ タグを追加」で、業種に合わせて自由に作れます。</div>';
 
   $$('#tagBody .tag-row').forEach(function(row){
     var i = parseInt(row.dataset.i, 10);
@@ -3955,7 +4005,7 @@ function importJson(file){
       state.version = 4;
       rebuildCodeMaps();
       activeStaffId = state.staff.length ? state.staff[0].id : null;
-      $('#presetSel').value = state.preset || 'glasses16';
+      $('#presetSel').value = state.preset || 'blank';
       refresh();
       syncAutoBtn();
       toast('読み込みました');
@@ -4003,7 +4053,7 @@ function changeMonth(ym){
 function applyPreset(key){
   var autoOn = isAutoFill();
   if(hasAnyInput() && !window.confirm('サンプルを読み込むと、今のシフトと設定は置き換わります。よろしいですか？')) {
-    $('#presetSel').value = state.preset || 'glasses16';
+    $('#presetSel').value = state.preset || 'blank';
     return;
   }
   state = normalize(buildPreset(key));
@@ -4079,6 +4129,17 @@ function bind(){
   $('#btnStaff').addEventListener('click', openStaffModal);
   $('#btnRules').addEventListener('click', function(){ renderRules(); openModal('rulesModal'); });
   $('#btnTags').addEventListener('click', function(){ renderTags(); openModal('tagsModal'); });
+  /* スタッフ0名の案内からのクイック操作 */
+  var egBtns = $('#emptyGuide');
+  if(egBtns) egBtns.addEventListener('click', function(e){
+    var b = e.target.closest ? e.target.closest('[data-empty]') : null;
+    if(!b) return;
+    var act = b.dataset.empty;
+    if(act === 'add-staff'){ openStaffModal(); }
+    else if(act === 'open-tags'){ renderTags(); openModal('tagsModal'); }
+    else if(act === 'preset-glasses16'){ $('#presetSel').value = 'glasses16'; applyPreset('glasses16'); }
+    else if(act === 'preset-glasses4'){ $('#presetSel').value = 'glasses4'; applyPreset('glasses4'); }
+  });
   $('#btnCsv').addEventListener('click', exportCsv);
   $('#btnJson').addEventListener('click', exportJson);
   $('#btnImport').addEventListener('click', function(){ $('#fileImport').click(); });
@@ -4090,7 +4151,7 @@ function bind(){
   $('#btnAddStaff').addEventListener('click', addStaff);
   $('#btnAddTag').addEventListener('click', function(){
     state.tags.push({id:'t'+Date.now().toString(36), name:'新タグ', color:'#5a6677'});
-    renderTags(); refresh();
+    renderTags(); refresh(); renderStaffFormIfOpen();
   });
 
   $('#staffList').addEventListener('click', function(e){
@@ -4173,9 +4234,9 @@ function init(){
   if(saved){
     state = normalize(saved);
   } else {
-    state = normalize(buildPreset('glasses16'));
+    /* 製品版の初回はスタッフ0名・タグ0個の空白から（自分の業種に合わせて作れる） */
+    state = normalize(buildPreset('blank'));
     rebuildCodeMaps();
-    generate(20261121);
   }
   rebuildCodeMaps();
   if(!state.staff.length && !saved) state = normalize(state);
@@ -4185,7 +4246,7 @@ function init(){
   fillMonthOptions();
   ensureMonthOption(state.month);
   $('#monthSel').value = state.month;
-  $('#presetSel').value = state.preset || 'glasses16';
+  $('#presetSel').value = state.preset || 'blank';
   bind();
   refresh();
   syncAutoBtn();
@@ -4209,7 +4270,7 @@ function init(){
     }
     state.capFix = 1;
   }
-  if(state.staff.length === 0){
+  if(state.staff.length === 0 && saved){
     setTimeout(function(){ toast('スタッフ未登録です。「スタッフ設定」から追加できます'); }, 400);
   }
   if(sampleMigrated && state.staff.length){
