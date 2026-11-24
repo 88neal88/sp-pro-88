@@ -11,7 +11,7 @@
   --line:#e4e9f0; --line2:#d6dde7; --accent:#1f6feb; --accent-d:#1a5cc4;
   --early:#1d4ed8; --early-bg:#e2ecff;
   --late:#9a5600; --late-bg:#fff1d5;
-  --off:#64748b; --off-bg:#f0f3f8;
+  --off:#ffffff; --off-bg:#475569; --off-bd:#334155;
   --req:#9d174d; --req-bg:#fde7f1;
   --train:#5b21b6; --train-bg:#eee8fe;
   --ren:#0f766e; --ren-bg:#d9f5ef;
@@ -80,6 +80,12 @@ h1,h2,h3{margin:0;font-weight:700}
 .pen.codepen-early{color:var(--early)} .pen.codepen-late{color:var(--late)}
 .pen.codepen-through{color:var(--through)} .pen.codepen-mid{color:var(--mid)}
 .pen.active.codepen-early,.pen.active.codepen-late,.pen.active.codepen-through,.pen.active.codepen-mid{color:#fff}
+/* 公休ペン：地の色に合わせた濃スレート。選択中は濃色＋青のリングで、どれを選んでいるかはっきり分かる */
+.pen[data-code="休"]{background:#e4e9f0;border-color:#b6c1cf;color:#334155}
+.pen[data-code="休"] small{color:#5a6677}
+.pen[data-code="休"]:hover{background:#dbe2ea;border-color:#8b97a8}
+.pen[data-code="休"].active{background:var(--off-bg);border-color:var(--off-bd);color:#fff;box-shadow:0 0 0 2px #fff,0 0 0 4px var(--accent)}
+.pen[data-code="休"].active small{color:rgba(255,255,255,.82)}
 
 /* ---------- shift time patterns (rules modal) ---------- */
 .bh-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
@@ -140,7 +146,7 @@ h1,h2,h3{margin:0;font-weight:700}
 .lg i{width:12px;height:12px;border-radius:3px;display:inline-block;border:1px solid transparent;font-style:normal}
 .lg i.e{background:var(--early-bg);border-color:#c3d6fb}
 .lg i.l{background:var(--late-bg);border-color:#f2d8a8}
-.lg i.o{background:var(--off-bg);border-color:#dfe5ee}
+.lg i.o{background:var(--off-bg);border-color:var(--off-bd)}
 .lg i.r{background:var(--req-bg);border-color:#efb9d1}
 .lg i.t{background:var(--train-bg);border-color:#cdbcf7}
 .lg i.n{background:var(--ren-bg);border-color:#a9e5d9}
@@ -197,7 +203,8 @@ td.cell.sun{background:#fffcfc}
 .sc.empty{background:transparent;border:1px dashed #dde3ec;color:#c3ccd8;font-size:13px;font-weight:400}
 .c-early{background:var(--early-bg);color:var(--early);border-color:#c3d6fb}
 .c-late{background:var(--late-bg);color:var(--late);border-color:#f0d5a3}
-.c-off{background:var(--off-bg);color:var(--off);border-color:#dde4ee}
+/* 公休：濃いスレート地に白文字（他の淡色シフトの中で一目で浮き上がるように） */
+.c-off{background:var(--off-bg);color:var(--off);border-color:var(--off-bd)}
 .c-req{background:var(--req-bg);color:var(--req);border-color:#efb9d1}
 .c-train{background:var(--train-bg);color:var(--train);border-color:#cdbcf7}
 .c-ren{background:var(--ren-bg);color:var(--ren);border-color:#a9e5d9}
@@ -207,6 +214,9 @@ td.cell.sun{background:#fffcfc}
 .sc.pinned::after{
   content:"";position:absolute;right:2px;bottom:2px;width:4px;height:4px;border-radius:50%;background:#5a6677;opacity:.9;
 }
+/* 公休セルの手動固定は、濃い地でも見えるよう白の点線枠と白い点にする */
+.sc.c-off.pinned{box-shadow:inset 0 0 0 1.5px rgba(255,255,255,.85)}
+.sc.c-off.pinned::after{background:#fff}
 .sc.locked{box-shadow:inset 0 0 0 1.5px currentColor;font-weight:700}
 .sc.locked::after{
   content:"";position:absolute;top:2px;right:2px;width:3px;height:3px;border-radius:1px;background:currentColor;opacity:.85;
@@ -231,6 +241,10 @@ td.sum.over{color:var(--hi);font-weight:700}
 td.sum.short{color:var(--mid);font-weight:700}
 td.sum.c-off i{font-style:normal;font-weight:400;font-size:9px;color:var(--ink3);margin-left:1px}
 td.sum.c-off.over i{color:var(--hi)}
+/* 合計欄の「公休」は、シフト表の濃いセルと違って通常の白背景・濃文字のまま（真っ黒にしない） */
+th.sum.c-off,td.sum.c-off{background:#fff;color:var(--ink2);border-color:var(--line)}
+thead th.sum.c-off{background:#f1f4f9;color:var(--ink2)}
+td.sum.c-off.over{color:var(--hi)}
 
 tfoot tr.f0 th,tfoot tr.f0 td{border-top:1px solid var(--line2);height:22px;font-size:9.5px;background:#f4f8ff;color:var(--ink2);position:sticky;bottom:57px;z-index:3}
 tfoot tr.f0 th.name-cell{background:#f4f8ff;font-size:9.5px;color:var(--ink2);font-weight:700}
@@ -253,6 +267,7 @@ tfoot th.name-cell{font-size:10px;color:var(--ink2);background:#fafbfd;z-index:5
 tfoot td.fc{text-align:center;font-variant-numeric:tabular-nums}
 tfoot td.fc.low{color:var(--hi);font-weight:700;background:#fdf0ef}
 tfoot td.sum{background:#fafbfd;font-size:10px}
+tfoot td.sum.c-off{background:#fafbfd;color:var(--ink2)}
 
 /* ---------- panel ---------- */
 .panel{padding:0}
@@ -834,11 +849,15 @@ function patHours(p){
   var br = Math.max(0, parseInt(p.breakMin,10) || 0);
   return Math.max(0, Math.round((patEnd(p) - patStart(p) - br) / 6) / 10);
 }
-/* 1日の所定時間を超える分（残業見込みにそのまま加算） */
-function patternExtra(p){
+/* 1日の実働時間と所定時間の差（残業見込み用。短い日はマイナスになり、月間で長い日と相殺される） */
+function patternDiff(p){
   if(!p) return 0;
   var per = (state && state.rules && state.rules.shiftHours) || 8;
-  return Math.max(0, Math.round((patHours(p) - per) * 10) / 10);
+  return Math.round((patHours(p) - per) * 10) / 10;
+}
+/* 残業上限の判定用（長い日のプラス分だけを数える。短い日のマイナスを先取りの「貯金」にしない） */
+function patternExtra(p){
+  return Math.max(0, patternDiff(p));
 }
 /* パターン一覧から、コード→表示・色・作業判定のマップを作り直す */
 function rebuildCodeMaps(){
@@ -1250,7 +1269,7 @@ function statsOfShifts(s, shifts){
       else if(p.group==='late') late++;
       else if(p.group==='through') through++;
       else mid++;
-      extra += patternExtra(p);
+      extra += patternDiff(p);
     }
     else if(c==='休') off++;
     else if(c==='希') req++;
@@ -1267,7 +1286,8 @@ function statsOfShifts(s, shifts){
   var effCap = cap, pl = getPlan();
   if(pl && pl.holiday && pl.holiday[s.id] != null) effCap = pl.holiday[s.id];
   var overDays = Math.max(0, work - (D - effCap));
-  var overtime = Math.round((overDays * per + extra) * 10) / 10;
+  /* 1日の所定時間との過不足を月間で合計（短い日はマイナスとして相殺）し、0未満にはしない */
+  var overtime = Math.max(0, Math.round((overDays * per + extra) * 10) / 10);
   return {early:early, late:late, mid:mid, through:through, off:off, req:req, ren:ren, train:train, undef:undef,
           work:work, holidays:holidays, need:need, cap:cap, overtime:overtime, extra:extra};
 }
@@ -1633,7 +1653,7 @@ function analyze(shifts){
     if(st.overtime > (s.overtimeCap||0) && st.holidays >= cap){
       warnings.push({sev:'high', group:'staff', staffId:s.id,
         title:s.name+'：残業見込み'+st.overtime+'h（上限'+s.overtimeCap+'h）',
-        detail:'公休不足を出勤で埋めた分を1日'+(R.shiftHours||8)+'時間で、通し' + st.through + '日分は所定超過' + throughExtra() + '時間／日で換算しています。', target:{staffId:s.id}});
+        detail:'1日の所定時間（'+(R.shiftHours||8)+'h）との過不足を月間で合計して計算しています（短い日はマイナスとして相殺）。公休不足を出勤で埋めた分は1日'+(R.shiftHours||8)+'時間で加算しています。', target:{staffId:s.id}});
     }
     if(st.undef > 0){
       warnings.push({sev:'low', group:'staff', staffId:s.id,
@@ -3779,7 +3799,7 @@ function renderRules(){
     + '<button class="btn" id="btnAddPat">＋ パターンを追加</button>'
     + '<span class="hint" style="margin:0">早番系・遅番系は1つずつ残るように保護</span>'
     + '</div>'
-    + '<p class="hint">実働時間＝終了−開始−休憩。1日の所定時間（'+(R.shiftHours||8)+'h）を超えた分は、そのまま残業見込みに加算します（例：通し'+(pats().filter(function(q){return q.group==='through';})[0] ? patHours(pats().filter(function(q){return q.group==='through';})[0])+'h→超過'+throughExtra()+'h' : '')+'）。<br>'
+    + '<p class="hint">実働時間＝終了−開始−休憩。1日の所定時間（'+(R.shiftHours||8)+'h）との過不足を月間で合計して残業見込みを計算します（短い日はマイナスとして相殺。例：通し'+(pats().filter(function(q){return q.group==='through';})[0] ? patHours(pats().filter(function(q){return q.group==='through';})[0])+'h→'+(throughExtra()>=0?'+':'')+throughExtra()+'h、7hの日→−1h' : '')+'）。<br>'
     + '入力パレット・セルの表示・集計列（早・遅・通）はすべて「区分」で集計します（中番は勤務計に含みます）。変更はすぐに保存・再チェックされます。</p>'
     + '</div>'
     + '<div class="rgrid">'
@@ -3812,7 +3832,7 @@ function renderRules(){
     + '<button class="btn" id="btnAddRule" style="margin-top:4px">＋ 条件を追加</button>'
     + '<p class="hint">例：早番に「鍵当番」1人／1日に「検眼」2人・「加工」1人・「補聴器」1人。<br>'
     + '「終日」は早番・遅番の合計で判定します。通し（早＋遅）は早番・遅番の両方にカウントされます。<br>'
-    + '通しは1人で早番・遅番をカバーし、残業見込みには各パターンの実働−所定'+(R.shiftHours||8)+'hを加算します。変更はすぐに自動チェックへ反映されます。</p>';
+    + '通しは1人で早番・遅番をカバーし、残業見込みは各パターンの「実働−所定'+(R.shiftHours||8)+'h」を月間で合計します（短い日はマイナスで相殺）。変更はすぐに自動チェックへ反映されます。</p>';
 
   function bindNum(id, key, min, max){
     var el = $(id);
