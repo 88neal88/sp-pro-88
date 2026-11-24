@@ -658,6 +658,7 @@ body.gate-locked{overflow:hidden}
     <button id="btnTags" class="btn">タグ</button>
     <span class="sep"></span>
     <button id="btnCsv" class="btn">CSV</button>
+    <button id="btnXlsx" class="btn" title="画面と同じ色のシフト表をExcel（.xlsx）で書き出します">Excel</button>
     <button id="btnJson" class="btn">JSON保存</button>
     <button id="btnImport" class="btn">読込</button>
     <button id="btnPrint" class="btn">印刷</button>
@@ -4200,6 +4201,564 @@ function exportCsv(){
   download(new Blob([text], {type:'text/csv;charset=utf-8'}), 'shift-' + state.month + '.csv');
   toast('CSVを書き出しました');
 }
+/* ================= XLSX（Excel出力：色付きシフト表） =================
+   外部ライブラリ・CDN・外部通信は使わず、この中だけで .xlsx を作る。
+   - 最小ZIP（無圧縮＝Store方式・CRC32付き）
+   - OpenXML（.xlsx）のシート1「シフト表」／シート2「ルール・警告」
+   シート1は画面のシフト表と同じ列順・同じ色で、そのまま掲示／印刷できる形にする。 */
+var XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+var XLSX_COLORS = {
+  off:     {bg:'FF475569', fg:'FFFFFFFF'},
+  early:   {bg:'FFEDF3FE', fg:'FF1D4ED8'},
+  late:    {bg:'FFFEF7E6', fg:'FFB45309'},
+  through: {bg:'FFEAF7F1', fg:'FF15803D'},
+  mid:     {bg:'FFECFEFF', fg:'FF0E7490'},
+  req:     {bg:'FFFCE7F3', fg:'FFBE185D'},
+  train:   {bg:'FFF3E8FF', fg:'FF7E22CE'},
+  ren:     {bg:'FFCCFBF1', fg:'FF0F766E'}
+};
+
+/* ---- CRC32（ZIP用） ---- */
+var XLSX_CRC_TABLE = (function(){
+  var t = [], n, k, c;
+  for(n=0; n<256; n++){
+    c = n;
+    for(k=0; k<8; k++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+    t[n] = c >>> 0;
+  }
+  return t;
+})();
+function xlsxCrc32(u8){
+  var c = 0xFFFFFFFF;
+  for(var i=0; i<u8.length; i++) c = XLSX_CRC_TABLE[(c ^ u8[i]) & 0xFF] ^ (c >>> 8);
+  return (c ^ 0xFFFFFFFF) >>> 0;
+}
+function xlsxU8(str){
+  if(typeof TextEncoder !== 'undefined') return new TextEncoder().encode(str);
+  var s = unescape(encodeURIComponent(str)), out = new Uint8Array(s.length);
+  for(var i=0; i<s.length; i++) out[i] = s.charCodeAt(i);
+  return out;
+}
+function xlsxBytes(list){
+  var n = 0, i;
+  for(i=0; i<list.length; i++) n += list[i].length;
+  var out = new Uint8Array(n), p = 0;
+  for(i=0; i<list.length; i++){ out.set(list[i], p); p += list[i].length; }
+  return out;
+}
+function xlsxU16(v){ return new Uint8Array([v & 255, (v >>> 8) & 255]); }
+function xlsxU32(v){ return new Uint8Array([v & 255, (v >>> 8) & 255, (v >>> 16) & 255, (v >>> 24) & 255]); }
+/* 複数ファイルを1つのZIPにまとめる（Store方式＝無圧縮。Excelはこの形をそのまま開ける） */
+function xlsxZip(files){
+  var local = [], cent = [], off = 0;
+  files.forEach(function(f){
+    var name = xlsxU8(f.name);
+    var data = xlsxU8(f.text);
+    var crc = xlsxCrc32(data);
+    var lh = xlsxBytes([xlsxU32(0x04034B50), xlsxU16(20), xlsxU16(0), xlsxU16(0), xlsxU16(0), xlsxU16(0x21),
+      xlsxU32(crc), xlsxU32(data.length), xlsxU32(data.length), xlsxU16(name.length), xlsxU16(0)]);
+    local.push(lh, name, data);
+    cent.push(xlsxBytes([xlsxU32(0x02014B50), xlsxU16(20), xlsxU16(20), xlsxU16(0), xlsxU16(0), xlsxU16(0), xlsxU16(0x21),
+      xlsxU32(crc), xlsxU32(data.length), xlsxU32(data.length), xlsxU16(name.length), xlsxU16(0), xlsxU16(0),
+      xlsxU16(0), xlsxU16(0), xlsxU32(0), xlsxU32(off)]), name);
+    off += lh.length + name.length + data.length;
+  });
+  var cd = xlsxBytes(cent);
+  var body = xlsxBytes(local);
+  var end = xlsxBytes([xlsxU32(0x06054B50), xlsxU16(0), xlsxU16(0), xlsxU16(files.length), xlsxU16(files.length),
+    xlsxU32(cd.length), xlsxU32(body.length), xlsxU16(0)]);
+  return xlsxBytes([body, cd, end]);
+}
+
+/* ---- XML ---- */
+function xlsxEsc(v){
+  return String(v == null ? '' : v)
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, '')
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&apos;');
+}
+function xlsxCol(n){
+  var s = '';
+  while(n > 0){ var m = (n - 1) % 26; s = String.fromCharCode(65 + m) + s; n = Math.floor((n - 1) / 26); }
+  return s;
+}
+
+/* ---- スタイル（フォント・塗り・罫線・配置を必要な分だけ登録する） ---- */
+function XlBook(){
+  this.fonts = [];
+  this.fills = ['<fill><patternFill patternType="none"/></fill>',
+                '<fill><patternFill patternType="gray125"/></fill>'];
+  this.borders = ['<border><left/><right/><top/><bottom/><diagonal/></border>'];
+  this.xfs = ['<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>'];
+  this.fmap = {}; this.flmap = {}; this.bdmap = {}; this.xmap = {};
+}
+XlBook.prototype.font = function(sz, bold, color){
+  var key = sz + '|' + (bold ? 1 : 0) + '|' + color;
+  if(this.fmap[key] != null) return this.fmap[key];
+  this.fonts.push('<font>' + (bold ? '<b/>' : '') + '<sz val="' + sz + '"/><color rgb="' + color + '"/>'
+    + '<name val="Meiryo"/><family val="2"/><charset val="128"/></font>');
+  this.fmap[key] = this.fonts.length - 1;
+  return this.fmap[key];
+};
+XlBook.prototype.fill = function(color){
+  if(!color) return 0;
+  if(this.flmap[color] != null) return this.flmap[color];
+  this.fills.push('<fill><patternFill patternType="solid"><fgColor rgb="' + color + '"/><bgColor indexed="64"/></patternFill></fill>');
+  this.flmap[color] = this.fills.length - 1;
+  return this.flmap[color];
+};
+XlBook.prototype.border = function(color){
+  if(!color) return 0;
+  if(this.bdmap[color] != null) return this.bdmap[color];
+  var side = function(tag){ return '<' + tag + ' style="thin"><color rgb="' + color + '"/></' + tag + '>'; };
+  this.borders.push('<border>' + side('left') + side('right') + side('top') + side('bottom') + '<diagonal/></border>');
+  this.bdmap[color] = this.borders.length - 1;
+  return this.bdmap[color];
+};
+XlBook.prototype.xf = function(fontId, fillId, borderId, h, v, wrap){
+  var key = [fontId, fillId, borderId, h, v, wrap ? 1 : 0].join('|');
+  if(this.xmap[key] != null) return this.xmap[key];
+  var al = '';
+  if(h || v || wrap){
+    al = '<alignment' + (h ? ' horizontal="' + h + '"' : '') + (v ? ' vertical="' + v + '"' : '')
+      + (wrap ? ' wrapText="1"' : '') + '/>';
+  }
+  this.xfs.push('<xf numFmtId="0" fontId="' + fontId + '" fillId="' + fillId + '" borderId="' + borderId + '" xfId="0"'
+    + ' applyFont="1" applyFill="1" applyBorder="1"' + (al ? ' applyAlignment="1"' : '') + '>' + al + '</xf>');
+  this.xmap[key] = this.xfs.length - 1;
+  return this.xmap[key];
+};
+XlBook.prototype.stylesXml = function(){
+  return '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+    + '<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+    + '<fonts count="' + this.fonts.length + '">' + this.fonts.join('') + '</fonts>'
+    + '<fills count="' + this.fills.length + '">' + this.fills.join('') + '</fills>'
+    + '<borders count="' + this.borders.length + '">' + this.borders.join('') + '</borders>'
+    + '<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>'
+    + '<cellXfs count="' + this.xfs.length + '">' + this.xfs.join('') + '</cellXfs>'
+    + '<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>'
+    + '<dxfs count="0"/>'
+    + '<tableStyles count="0" defaultTableStyle="TableStyleMedium9" defaultPivotStyle="PivotStyleLight16"/>'
+    + '</styleSheet>';
+};
+
+/* ---- シート（行・セル・結合・列幅を持つだけの入れ物） ---- */
+function XlSheet(){
+  this.rows = [];
+  this.merges = [];
+  this.cols = [];
+  this.freeze = false;
+  this.tab = false;
+}
+XlSheet.prototype.row = function(height){
+  var r = {h: height || 0, cells: {}};
+  this.rows.push(r);
+  return r;
+};
+XlSheet.prototype.put = function(r, col, style, value, numeric){
+  r.cells[col] = {s: style == null ? 0 : style, v: value, n: !!numeric};
+};
+XlSheet.prototype.merge = function(ref){ this.merges.push(ref); };
+XlSheet.prototype.xml = function(){
+  var lastCol = 1, lastRow = this.rows.length, self = this;
+  this.rows.forEach(function(r){
+    Object.keys(r.cells).forEach(function(c){ if(+c > lastCol) lastCol = +c; });
+  });
+  var out = ['<?xml version="1.0" encoding="UTF-8" standalone="yes"?>',
+    '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">',
+    '<sheetPr><pageSetUpPr fitToPage="1"/></sheetPr>',
+    '<dimension ref="A1:' + xlsxCol(lastCol) + lastRow + '"/>',
+    '<sheetViews><sheetView' + (this.tab ? ' tabSelected="1"' : '') + ' showGridLines="0" workbookViewId="0">'
+      + (this.freeze ? '<pane xSplit="1" ySplit="3" topLeftCell="B4" activePane="bottomRight" state="frozen"/>' : '')
+      + '</sheetView></sheetViews>',
+    '<sheetFormatPr defaultRowHeight="15"/>'];
+  if(this.cols.length){
+    out.push('<cols>' + this.cols.map(function(c){
+      return '<col min="' + c[0] + '" max="' + c[1] + '" width="' + c[2] + '" customWidth="1"/>';
+    }).join('') + '</cols>');
+  }
+  out.push('<sheetData>');
+  this.rows.forEach(function(r, idx){
+    var rn = idx + 1;
+    var keys = Object.keys(r.cells).map(Number).sort(function(a, b){ return a - b; });
+    var attrs = ' r="' + rn + '"' + (r.h ? ' ht="' + r.h + '" customHeight="1"' : '');
+    if(!keys.length){ out.push('<row' + attrs + '/>'); return; }
+    out.push('<row' + attrs + '>');
+    keys.forEach(function(col){
+      var c = r.cells[col], ref = xlsxCol(col) + rn;
+      if(c.n && c.v !== '' && c.v != null){
+        out.push('<c r="' + ref + '" s="' + c.s + '"><v>' + c.v + '</v></c>');
+      } else {
+        var txt = (c.v == null ? '' : String(c.v));
+        out.push(txt === ''
+          ? '<c r="' + ref + '" s="' + c.s + '"/>'
+          : '<c r="' + ref + '" s="' + c.s + '" t="inlineStr"><is><t xml:space="preserve">' + xlsxEsc(txt) + '</t></is></c>');
+      }
+    });
+    out.push('</row>');
+  });
+  out.push('</sheetData>');
+  if(this.merges.length){
+    out.push('<mergeCells count="' + this.merges.length + '">'
+      + this.merges.map(function(m){ return '<mergeCell ref="' + m + '"/>'; }).join('') + '</mergeCells>');
+  }
+  out.push('<printOptions horizontalCentered="1"/>');
+  out.push('<pageMargins left="0.25" right="0.25" top="0.35" bottom="0.35" header="0.2" footer="0.2"/>');
+  out.push('<pageSetup paperSize="9" orientation="landscape" fitToWidth="1" fitToHeight="1"/>');
+  out.push('</worksheet>');
+  return out.join('');
+};
+
+/* ---- スタッフの表示用ラベル ---- */
+var XLSX_PREF = {any:'', morning:'朝型', evening:'夜型', through:'通し可'};
+function xlsxTagNames(s){
+  return (s.tags || []).map(function(id){ var t = tagById(id); return t ? t.name : ''; }).filter(Boolean).join('／');
+}
+function xlsxIndText(s){
+  var b = indBadges(s).slice();
+  var pv = XLSX_PREF[s.pref];
+  if(pv) b.push(pv);
+  return b.join('／');
+}
+function xlsxSevLabel(sev){ return sev === 'high' ? '高' : sev === 'mid' ? '中' : '低'; }
+
+/* ---- シート1「シフト表」 ---- */
+function xlsxSheetShift(B){
+  var D = monthDays(), an = lastAnalysis, staff = state.staff || [], i, d;
+  var q = splitMonth(state.month);
+  var sh = new XlSheet();
+  sh.freeze = true;
+  sh.tab = true;
+
+  /* 色 */
+  var headFill = 'FFF6F8FB', sumHeadFill = 'FFF1F4F9', footFill = 'FFF4F8FF', footFill2 = 'FFFAFBFD';
+  var lineCol = 'FFD6DDE7', lineSoft = 'FFE4E9F0', badFill = 'FFFDECEA';
+  var ink = 'FF1B2330', ink2 = 'FF5A6677', ink3 = 'FFB6C0CD', red = 'FFDC2626', sat = 'FF1D4ED8';
+  var bd = B.border(lineCol), bdSoft = B.border(lineSoft);
+
+  var stTitle = B.xf(B.font(14, true, ink), 0, 0, 'center', 'center', false);
+  var stHead = B.xf(B.font(9, true, ink2), B.fill(headFill), bd, 'center', 'center', false);
+  var stHeadSat = B.xf(B.font(9, true, sat), B.fill(headFill), bd, 'center', 'center', false);
+  var stHeadSun = B.xf(B.font(9, true, red), B.fill(headFill), bd, 'center', 'center', false);
+  var stDow = B.xf(B.font(8, false, ink2), B.fill(headFill), bd, 'center', 'center', false);
+  var stDowSat = B.xf(B.font(8, true, sat), B.fill(headFill), bd, 'center', 'center', false);
+  var stDowSun = B.xf(B.font(8, true, red), B.fill(headFill), bd, 'center', 'center', false);
+  var stSumHead = B.xf(B.font(10, true, ink2), B.fill(sumHeadFill), bd, 'center', 'center', true);
+  var stName = B.xf(B.font(10, true, ink), B.fill('FFFFFFFF'), bd, 'left', 'center', false);
+  var stEmpty = B.xf(B.font(10, false, ink3), B.fill('FFFFFFFF'), bd, 'center', 'center', false);
+  var stSum = B.xf(B.font(10, false, ink), B.fill('FFFFFFFF'), bd, 'center', 'center', false);
+  var stSumBad = B.xf(B.font(10, true, red), B.fill('FFFFFFFF'), bd, 'center', 'center', false);
+  var stFootLabel = B.xf(B.font(10, true, ink2), B.fill(footFill), bd, 'left', 'center', false);
+  var stFootLabel2 = B.xf(B.font(10, true, ink2), B.fill(footFill2), bd, 'left', 'center', false);
+  var stFoot = B.xf(B.font(10, false, ink), B.fill(footFill2), bd, 'center', 'center', false);
+  var stFootBad = B.xf(B.font(10, true, red), B.fill(badFill), bd, 'center', 'center', false);
+  var stTarget = B.xf(B.font(10, true, ink), B.fill(footFill), bd, 'center', 'center', false);
+
+  /* 列幅：名前／日／集計 */
+  var nCols = D + 7;
+  sh.cols.push(['1', '1', 15]);
+  sh.cols.push(['2', String(1 + D), 4.8]);
+  sh.cols.push([String(2 + D), String(2 + D), 4.6]);
+  sh.cols.push([String(3 + D), String(4 + D), 3.8]);
+  sh.cols.push([String(5 + D), String(5 + D), 3.8]);
+  sh.cols.push([String(6 + D), String(6 + D), 5.8]);
+  sh.cols.push([String(7 + D), String(7 + D), 5.6]);
+
+  /* 1行目：タイトル */
+  var r1 = sh.row(24);
+  sh.put(r1, 1, stTitle, q.y + '年' + q.m + '月 シフト表（スタッフ' + staff.length + '名）');
+  sh.merge('A1:' + xlsxCol(nCols) + '1');
+
+  /* 2〜3行目：ヘッダー（日付＋曜日） */
+  var r2 = sh.row(18), r3 = sh.row(14);
+  sh.put(r2, 1, stHead, 'スタッフ');
+  sh.merge('A2:A3');
+  for(d=1; d<=D; d++){
+    var w = weekdayOf(d);
+    var hStyle = w === 0 ? stHeadSun : w === 6 ? stHeadSat : stHead;
+    var dStyle = w === 0 ? stDowSun : w === 6 ? stDowSat : stDow;
+    sh.put(r2, 1 + d, hStyle, d + '日');
+    sh.put(r3, 1 + d, dStyle, '(' + DOW[w] + ')');
+  }
+  var sumHeads = ['出勤', '早', '遅', '通', '公休', '残業'];
+  for(i=0; i<sumHeads.length; i++){
+    var sc = 2 + D + i;
+    sh.put(r2, sc, stSumHead, sumHeads[i]);
+    sh.merge(xlsxCol(sc) + '2:' + xlsxCol(sc) + '3');
+  }
+
+  /* スタッフ行 */
+  for(i=0; i<staff.length; i++){
+    var s = staff[i], x = an.sStats[s.id] || statsOfShifts(s, state.shifts);
+    var row = sh.row(20);
+    sh.put(row, 1, stName, s.name);
+    for(d=1; d<=D; d++){
+      var code = getShift(s.id, d) || '';
+      var g = codeGroup(code);
+      var style;
+      if(code === '休') style = xlsxCellStyle(B, 'off');
+      else if(code === '希') style = xlsxCellStyle(B, 'req');
+      else if(code === '研') style = xlsxCellStyle(B, 'train');
+      else if(code === '連') style = xlsxCellStyle(B, 'ren');
+      else if(g && XLSX_COLORS[g]) style = xlsxCellStyle(B, g);
+      else style = stEmpty;
+      sh.put(row, 1 + d, style, code);
+    }
+    sh.put(row, 2 + D, stSum, x.work, true);
+    sh.put(row, 3 + D, stSum, x.early, true);
+    sh.put(row, 4 + D, stSum, x.late, true);
+    sh.put(row, 5 + D, stSum, x.through || 0, true);
+    sh.put(row, 6 + D, x.holidays > x.cap ? stSumBad : stSum, x.holidays + '/' + x.cap);
+    sh.put(row, 7 + D, (x.overtime > (s.overtimeCap || 0)) ? stSumBad : stSum, x.overtime ? x.overtime + 'h' : '–');
+  }
+
+  /* 下部集計（画面と同じ5行） */
+  var minE = state.rules.minEarly || 0, minL = state.rules.minLate || 0;
+  var foot = [
+    {label: '必要人数', kind: 'target'},
+    {label: '出勤計', kind: 'work'},
+    {label: '早／遅', kind: 'el'},
+    {label: '通し人数', kind: 'through'},
+    {label: '始／終人数', kind: 'cover'}
+  ];
+  foot.forEach(function(f, fi){
+    var row = sh.row(18);
+    sh.put(row, 1, fi === 0 ? stFootLabel : stFootLabel2, f.label);
+    for(d=1; d<=D; d++){
+      var tgt = dayTarget(d), ds = an.dayStats[d];
+      if(f.kind === 'target'){
+        sh.put(row, 1 + d, stTarget, tgt, true);
+      } else if(f.kind === 'work'){
+        var n = ds ? ds.workers.length : 0;
+        sh.put(row, 1 + d, n < tgt ? stFootBad : stFoot, n, true);
+      } else if(f.kind === 'el'){
+        var e = ds ? ds.early.length : 0, l = ds ? ds.late.length : 0;
+        sh.put(row, 1 + d, (e < minE || l < minL) ? stFootBad : stFoot, e + '/' + l);
+      } else if(f.kind === 'through'){
+        sh.put(row, 1 + d, stFoot, (ds && ds.through ? ds.through : 0), true);
+      } else {
+        var oc = 0, cc = 0;
+        if(ds && ds.workers.length){
+          var codes = ds.workers.map(function(z){ return z.c; });
+          oc = openCover(codes); cc = closeCover(codes);
+        }
+        var bad = (openNeed() > 0 && oc > 0 && oc < openNeed()) || (closeNeed() > 0 && cc > 0 && cc < closeNeed());
+        sh.put(row, 1 + d, bad ? stFootBad : stFoot, oc + '/' + cc);
+      }
+    }
+  });
+  return sh;
+}
+/* セル1つ分のスタイル（背景・文字色・太字・中央揃え・細い罫線） */
+function xlsxCellStyle(B, key){
+  var c = XLSX_COLORS[key];
+  if(!c) return 0;
+  var f = B.font(10, true, c.fg);
+  var fl = B.fill(c.bg);
+  var bd = B.border('FFD6DDE7');
+  return B.xf(f, fl, bd, 'center', 'center', false);
+}
+
+/* ---- シート2「ルール・警告」 ---- */
+function xlsxSheetRules(B){
+  var D = monthDays(), an = lastAnalysis, q = splitMonth(state.month);
+  var staff = state.staff || [], W = an.warnings || [];
+  var sh = new XlSheet();
+  /* 列幅は全表で共通。広い欄は結合で確保する（A:名前/略称 B:役職/名称 C:区分… I:残業上限） */
+  var widths = [12, 12, 10, 10, 10, 10, 10, 10, 10];
+  widths.forEach(function(w, i){ sh.cols.push([String(i + 1), String(i + 1), w]); });
+  var LAST = xlsxCol(widths.length);
+
+  var ink = 'FF1B2330', ink2 = 'FF5A6677';
+  var bd = B.border('FFD6DDE7'), bdSoft = B.border('FFE4E9F0');
+  var stTitle = B.xf(B.font(14, true, ink), 0, 0, 'left', 'center', false);
+  var stSec = B.xf(B.font(11, true, 'FF1A4FB4'), B.fill('FFEEF4FF'), bdSoft, 'left', 'center', false);
+  var stLabel = B.xf(B.font(10, true, ink2), B.fill('FFFFFFFF'), bdSoft, 'left', 'center', false);
+  var stValue = B.xf(B.font(10, false, ink), B.fill('FFFFFFFF'), bdSoft, 'left', 'center', false);
+  var stTblHead = B.xf(B.font(10, true, ink2), B.fill('FFF1F4F9'), bd, 'center', 'center', true);
+  var stText = B.xf(B.font(10, false, ink), B.fill('FFFFFFFF'), bd, 'left', 'center', true);
+  var stMid = B.xf(B.font(10, false, ink), B.fill('FFFFFFFF'), bd, 'center', 'center', true);
+  var stBad = B.xf(B.font(10, true, 'FFDC2626'), B.fill('FFFFFFFF'), bd, 'center', 'center', true);
+
+  var r = sh.row(24);
+  sh.put(r, 1, stTitle, q.y + '年' + q.m + '月 シフト表 — ルール・警告');
+  sh.merge('A1:' + LAST + '1');
+
+  function rowNo(){ return sh.rows.length; }
+  function section(title){
+    var row = sh.row(20);
+    sh.put(row, 1, stSec, title);
+    sh.merge('A' + rowNo() + ':' + LAST + rowNo());
+  }
+  function info(label, value, fromCol, toCol){
+    var row = sh.row(0);
+    sh.put(row, 1, stLabel, label);
+    sh.put(row, 2, stValue, value);
+    sh.merge(xlsxCol(fromCol) + rowNo() + ':' + xlsxCol(toCol) + rowNo());
+  }
+  function blank(){ sh.row(6); }
+  function tableHead(cells, spans){
+    var row = sh.row(18);
+    cells.forEach(function(t, i){ sh.put(row, i + 1, stTblHead, t); });
+    (spans || []).forEach(function(sp){
+      sh.merge(xlsxCol(sp[0]) + rowNo() + ':' + xlsxCol(sp[1]) + rowNo());
+    });
+  }
+
+  blank();
+  section('営業時間・人数');
+  info('営業時間', minToHM(openMin()) + '〜' + minToHM(closeMin()), 2, 5);
+  info('始業人数', (openNeed() > 0 ? openNeed() + '人' : '0（無効）') + '（' + minToHM(openMin()) + '時点）', 2, 5);
+  info('終業人数', (closeNeed() > 0 ? closeNeed() + '人' : '0（無効）') + '（' + minToHM(closeMin()) + '時点）', 2, 5);
+  info('基本人数', (state.rules.minTotal || 0) + '人', 2, 5);
+  info('連勤上限', (state.rules.maxConsec || 0) + '日', 2, 5);
+  info('所定時間', (state.rules.shiftHours || 8) + '時間', 2, 5);
+  var customDays = [];
+  for(var cd=1; cd<=D; cd++){ if(isCustomTarget(cd)) customDays.push(cd + '日' + dayTarget(cd) + '人'); }
+  if(customDays.length) info('日別の必要人数', customDays.join('・'), 2, 9);
+
+  blank();
+  section('シフト時間パターン');
+  tableHead(['略称', '名称', '区分', '開始', '終了', '休憩(分)', '実働(h)']);
+  pats().forEach(function(p){
+    var row = sh.row(0);
+    sh.put(row, 1, stMid, p.code);
+    sh.put(row, 2, stText, p.name);
+    sh.put(row, 3, stText, GROUP_LABEL[p.group] || '');
+    sh.put(row, 4, stMid, p.start);
+    sh.put(row, 5, stMid, p.end);
+    sh.put(row, 6, stMid, (parseInt(p.breakMin, 10) || 0), true);
+    sh.put(row, 7, stMid, patHours(p), true);
+  });
+
+  blank();
+  section('スタッフ（' + staff.length + '名）');
+  var hrow = sh.row(18);
+  sh.put(hrow, 1, stTblHead, '名前');
+  sh.put(hrow, 2, stTblHead, '役職');
+  sh.put(hrow, 3, stTblHead, 'タグ');
+  sh.put(hrow, 4, stTblHead, '');
+  sh.put(hrow, 5, stTblHead, '個別条件');
+  sh.put(hrow, 6, stTblHead, ''); sh.put(hrow, 7, stTblHead, '');
+  sh.put(hrow, 8, stTblHead, '目標公休');
+  sh.put(hrow, 9, stTblHead, '残業上限(h)');
+  sh.merge('C' + rowNo() + ':D' + rowNo());
+  sh.merge('E' + rowNo() + ':G' + rowNo());
+  staff.forEach(function(s){
+    var x = an.sStats[s.id] || statsOfShifts(s, state.shifts);
+    var row = sh.row(0);
+    sh.put(row, 1, stText, s.name);
+    sh.put(row, 2, stText, s.role);
+    sh.put(row, 3, stText, xlsxTagNames(s));
+    sh.put(row, 4, stText, '');
+    sh.put(row, 5, stText, xlsxIndText(s));
+    sh.put(row, 6, stText, '');
+    sh.put(row, 7, stText, '');
+    sh.put(row, 8, stMid, x.cap, true);
+    sh.put(row, 9, stMid, s.overtimeCap || 0, true);
+    sh.merge(xlsxCol(3) + rowNo() + ':' + xlsxCol(4) + rowNo());
+    sh.merge(xlsxCol(5) + rowNo() + ':' + xlsxCol(7) + rowNo());
+  });
+
+  blank();
+  section('警告（' + W.length + '件）');
+  if(!W.length){
+    var okRow = sh.row(0);
+    sh.put(okRow, 1, stText, '抜け漏れは見つかりませんでした');
+    sh.merge('A' + rowNo() + ':' + LAST + rowNo());
+  } else {
+    var wrow = sh.row(18);
+    sh.put(wrow, 1, stTblHead, 'No.');
+    sh.put(wrow, 2, stTblHead, '重要度');
+    sh.put(wrow, 3, stTblHead, 'タイトル');
+    sh.put(wrow, 4, stTblHead, ''); sh.put(wrow, 5, stTblHead, '');
+    sh.put(wrow, 6, stTblHead, '詳細');
+    sh.put(wrow, 7, stTblHead, ''); sh.put(wrow, 8, stTblHead, ''); sh.put(wrow, 9, stTblHead, '');
+    sh.merge('C' + rowNo() + ':E' + rowNo());
+    sh.merge('F' + rowNo() + ':I' + rowNo());
+    W.forEach(function(w, i){
+      var row = sh.row(0);
+      sh.put(row, 1, stMid, i + 1, true);
+      sh.put(row, 2, w.sev === 'high' ? stBad : stMid, xlsxSevLabel(w.sev));
+      sh.put(row, 3, stText, w.title);
+      sh.put(row, 4, stText, ''); sh.put(row, 5, stText, '');
+      sh.put(row, 6, stText, w.detail || '');
+      sh.put(row, 7, stText, ''); sh.put(row, 8, stText, ''); sh.put(row, 9, stText, '');
+      sh.merge(xlsxCol(3) + rowNo() + ':' + xlsxCol(5) + rowNo());
+      sh.merge(xlsxCol(6) + rowNo() + ':' + xlsxCol(9) + rowNo());
+    });
+  }
+  return sh;
+}
+
+/* ---- ブック全体（2シート） ---- */
+function xlsxBuild(){
+  var B = new XlBook();
+  var s1 = xlsxSheetShift(B);
+  var s2 = xlsxSheetRules(B);
+  var files = [
+    {name: '[Content_Types].xml', text:
+      '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+      + '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+      + '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+      + '<Default Extension="xml" ContentType="application/xml"/>'
+      + '<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>'
+      + '<Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>'
+      + '<Override PartName="/xl/worksheets/sheet2.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>'
+      + '<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>'
+      + '<Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/>'
+      + '<Override PartName="/docProps/app.xml" ContentType="application/vnd.openxmlformats-officedocument.extended-properties+xml"/>'
+      + '</Types>'},
+    {name: '_rels/.rels', text:
+      '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+      + '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+      + '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>'
+      + '<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties" Target="docProps/core.xml"/>'
+      + '<Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/extended-properties" Target="docProps/app.xml"/>'
+      + '</Relationships>'},
+    {name: 'docProps/core.xml', text:
+      '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+      + '<cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties"'
+      + ' xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/"'
+      + ' xmlns:dcmitype="http://purl.org/dc/dcmitype/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">'
+      + '<dc:title>' + xlsxEsc(splitMonth(state.month).y + '年' + splitMonth(state.month).m + '月 シフト表') + '</dc:title>'
+      + '<dc:creator>店舗シフト作成＆抜け漏れチェック</dc:creator>'
+      + '</cp:coreProperties>'},
+    {name: 'docProps/app.xml', text:
+      '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+      + '<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties">'
+      + '<Application>店舗シフト作成＆抜け漏れチェック</Application></Properties>'},
+    {name: 'xl/workbook.xml', text:
+      '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+      + '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"'
+      + ' xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
+      + '<bookViews><workbookView activeTab="0"/></bookViews>'
+      + '<sheets><sheet name="シフト表" sheetId="1" r:id="rId1"/><sheet name="ルール・警告" sheetId="2" r:id="rId2"/></sheets>'
+      + '</workbook>'},
+    {name: 'xl/_rels/workbook.xml.rels', text:
+      '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+      + '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+      + '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>'
+      + '<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet2.xml"/>'
+      + '<Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>'
+      + '</Relationships>'},
+    {name: 'xl/styles.xml', text: B.stylesXml()},
+    {name: 'xl/worksheets/sheet1.xml', text: s1.xml()},
+    {name: 'xl/worksheets/sheet2.xml', text: s2.xml()}
+  ];
+  return xlsxZip(files);
+}
+
+function exportXlsx(){
+  try{
+    var bytes = xlsxBuild();
+    download(new Blob([bytes], {type: XLSX_MIME}), 'shift-' + state.month + '.xlsx');
+    toast('Excel（.xlsx）を書き出しました');
+  }catch(e){
+    toast('Excelの書き出しに失敗しました（' + (e && e.message ? e.message : '不明なエラー') + '）');
+  }
+}
+/* ================= /XLSX ================= */
 function exportJson(){
   var text = JSON.stringify({app:'shift-planner', version:3, savedAt:new Date().toISOString(), state:state}, null, 2);
   download(new Blob([text], {type:'application/json'}), 'shift-' + state.month + '.json');
@@ -4352,6 +4911,7 @@ function bind(){
     else if(act === 'preset-glasses4'){ $('#presetSel').value = 'glasses4'; applyPreset('glasses4'); }
   });
   $('#btnCsv').addEventListener('click', exportCsv);
+  $('#btnXlsx').addEventListener('click', exportXlsx);
   $('#btnJson').addEventListener('click', exportJson);
   $('#btnImport').addEventListener('click', function(){ $('#fileImport').click(); });
   $('#fileImport').addEventListener('change', function(e){
